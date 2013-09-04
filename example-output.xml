@@ -1,0 +1,11 @@
+<?xml version="1.0" encoding="utf-8" ?>
+<questions>
+	<question id="31055" importance="3" public="true">
+		<prompt>Would you date someone who kept a gun in the house?</prompt>
+		<responses>
+			<response mine="true" match="true">Yes</response>
+			<response match="true">No</response>
+		</responses>
+		<explanation>But I wouldn't date someone who kept guns at *my* house.</explanation>
+	</question>
+</questions>
