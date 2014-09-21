@@ -240,3 +240,4 @@ if __name__ == "__main__":
 
 	xml = to_xml(questions, messages)
 	xml.write(sys.stdout, encoding="UTF-8")
+	sys.stderr.write("\n")
