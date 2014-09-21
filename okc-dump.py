@@ -33,6 +33,7 @@ kMessageFinder = re.compile(r"^message_(\d+)")
 kTimestampFinder = re.compile(r"(\d+), 'MESSAGE_FORMAT'")
 kQuestionsPerPage = 10
 kThreadsPerPage = 30
+kMaximumThreadCount = 999
 kConfigFile = "okc-dump.ini"
 
 class Answer(object):
@@ -140,12 +141,6 @@ def get_question_page(cj, opener, username, low):
 	questions = parse_questions(response.read())
 	return questions
 
-def get_thread_count(cj, opener, username, is_sent):
-	response = opener.open(kMessageUrl + "?folder={}".format(message_type_to_folder(is_sent)))
-	soup = BeautifulSoup(response.read())
-	count = soup.find(class_="last")
-	return int(count.string) * kThreadsPerPage
-
 def get_thread_page(cj, opener, username, low, is_sent):
 	response = opener.open(kMessageUrl + "?low={}&folder={}".format(low, message_type_to_folder(is_sent)))
 	threads = parse_threads(response.read())
@@ -219,20 +214,20 @@ if __name__ == "__main__":
 	if True:
 		threads = set()
 		# Sent
-		thread_count = get_thread_count(cj, opener, username, True)
-		sys.stderr.write("Found {} sent message threads\n".format(thread_count))
-		sys.stderr.flush()
-		for low in range(1, thread_count, kThreadsPerPage):
-			threads.update(get_thread_page(cj, opener, username, low, True))
+		for low in range(1, kMaximumThreadCount, kThreadsPerPage):
+			page = get_thread_page(cj, opener, username, low, True)
+			if not page:
+				break
+			threads.update(page)
 			sys.stderr.write(".")
 			sys.stderr.flush()
 		sys.stderr.write("\n")
 		# Received
-		thread_count = get_thread_count(cj, opener, username, False)
-		sys.stderr.write("Found {} received message threads\n".format(thread_count))
-		sys.stderr.flush()
-		for low in range(1, thread_count, kThreadsPerPage):
-			threads.update(get_thread_page(cj, opener, username, low, False))
+		for low in range(1, kMaximumThreadCount, kThreadsPerPage):
+			page = get_thread_page(cj, opener, username, low, False)
+			if not page:
+				break
+			threads.update(page)
 			sys.stderr.write(".")
 			sys.stderr.flush()
 		sys.stderr.write("\n")
