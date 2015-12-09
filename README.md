@@ -6,7 +6,7 @@ profile, and writes them as XML to stdout. Now it's possible to have backups.
 
 Requirements
 ============
- * Python 2.7.2 or later
+ * Python 2.7.x
  * BeautifulSoup 4.x
  * OkCupid user account
 
@@ -18,7 +18,7 @@ only by yourself, as it contains your OkCupid username and password.
 
 Once you have that, just run it from the command line:
 
-    python okc-dump.py > questions.xml
+    python okc-dump.py -a questions.xml
 
 It'll take a little while, but in the end, you'll have your backup.
 
