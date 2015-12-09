@@ -30,11 +30,12 @@ kQtextFinder = re.compile(r"^qtext_(\d+)")
 kQuestionFinder = re.compile(r"^question_(\d+)")
 kThreadFinder = re.compile(r"threadid=(\d+)")
 kMessageFinder = re.compile(r"^message_(\d+)")
+kImportanceFinder = re.compile(r"^importance_(\d+)")
 kTimestampFinder = re.compile(r"(\d+), 'MESSAGE_FORMAT'")
-kQuestionsPerPage = 10
 kThreadsPerPage = 30
 kMaximumThreadCount = 999
 kConfigFile = "okc-dump.ini"
+kBSParser = "lxml"
 
 class Answer(object):
 	def __init__(self, text, mine, match):
@@ -64,35 +65,45 @@ def message_type_to_folder(is_sent):
 	return 2 if is_sent else 1
 
 def parse_questions(page):
-	soup = BeautifulSoup(page)
+	soup = BeautifulSoup(page, kBSParser)
 	questions = list()
 	for question in soup.find_all(id=kQuestionFinder):
+		question_classes = question["class"]
+		public = "public" in question_classes
 		prompt = question.find(id=kQtextFinder)
 		if not prompt:
 			continue
 		qid = kQtextFinder.match(prompt["id"]).group(1)
-		question_text = prompt.string
+		question_text = " ".join(prompt.text.split())
 		answer_div = prompt.find_next_sibling()
 		answers = list()
+		found_mine = False
 		for response in answer_div.find_all("li"):
 			answer = response.string
 			classes = response["class"]
 			mine = "mine" in classes
 			match = "match" in classes
+			if mine:
+				found_mine = True
 			answers.append(Answer(answer, mine, match))
+		if not found_mine:
+			# unanswered
+			continue
 		explanation = None
 		textarea = answer_div.find("textarea")
 		if textarea.contents:
 			explanation = textarea.string
-		importance_input = question.find(id="question_{}_importance".format(qid))
-		importance = importance_input["value"]
-		public_input = question.find(id="public_{}".format(qid))
-		public = public_input["value"] == "on"
+		importance_levels = question.find_all(id=kImportanceFinder)
+		importance = None
+		for importance_level in importance_levels:
+			if importance_level.has_attr("checked"):
+				importance = importance_level["value"]
+				break
 		questions.append(Question(qid, question_text, public, importance, answers, explanation))
 	return questions
 
 def parse_threads(page):
-	soup = BeautifulSoup(page)
+	soup = BeautifulSoup(page, kBSParser)
 	threads = list()
 	for entry in soup.find_all(href=kThreadFinder):
 		matches = kThreadFinder.search(entry["href"])
@@ -100,7 +111,7 @@ def parse_threads(page):
 	return threads
 
 def parse_thread(page, thread_id, username):
-	soup = BeautifulSoup(page)
+	soup = BeautifulSoup(page, kBSParser)
 	messages = list()
 	buddy_name = soup.find(attrs={ "name": "buddyname"})['value']
 	for message in soup.find_all(id=kMessageFinder):
@@ -132,9 +143,11 @@ def login(cj, opener, username, password):
 
 def get_question_count(cj, opener, username):
 	response = opener.open(kQuestionUrl.format(username))
-	soup = BeautifulSoup(response.read())
-	count = soup.find(id="q_num_total")
-	return int(count.string)
+	soup = BeautifulSoup(response.read(), kBSParser)
+	page_element = soup.find(id="questions_pages")
+	pages = page_element['data-total-pages']
+	questions_per_page = page_element['data-rows']
+	return (int(pages), int(questions_per_page))
 
 def get_question_page(cj, opener, username, low):
 	response = opener.open(kQuestionUrl.format(username) + "?low={}".format(low))
@@ -157,7 +170,7 @@ def to_xml(questions, messages):
 	for question in questions:
 		attributes = {
 			"id": question.qid,
-			"importance": question.importance,
+			"importance": str(question.importance),
 		}
 		if question.public:
 			attributes["public"] = "true"
@@ -200,18 +213,19 @@ if __name__ == "__main__":
 	questions = list()
 	messages = list()
 	# TODO parameterize
-	if False:
-		question_count = get_question_count(cj, opener, username)
+	if True:
+		pages, questions_per_page = get_question_count(cj, opener, username)
+		question_count = pages * questions_per_page
 		sys.stderr.write("Fetching {} questions\n".format(question_count))
 		sys.stderr.flush()
-		for low in range(1, question_count, kQuestionsPerPage):
+		for low in range(1, question_count, questions_per_page):
 			questions.extend(get_question_page(cj, opener, username, low))
 			sys.stderr.write(".")
 			sys.stderr.flush()
 		sys.stderr.write("\n")
 	# Messages
 	# TODO parameterize
-	if True:
+	if False:
 		threads = set()
 		# Sent
 		for low in range(1, kMaximumThreadCount, kThreadsPerPage):
