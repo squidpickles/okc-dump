@@ -225,7 +225,7 @@ if __name__ == "__main__":
 		sys.stderr.write("\n")
 	# Messages
 	# TODO parameterize
-	if False:
+	if True:
 		threads = set()
 		# Sent
 		for low in range(1, kMaximumThreadCount, kThreadsPerPage):
