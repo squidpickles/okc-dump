@@ -19,13 +19,17 @@ import sys
 import urllib
 import urllib2
 import cookielib
+import argparse
 import ConfigParser
 import xml.etree.ElementTree as ET
 from bs4 import BeautifulSoup
 
-kLoginUrl = "https://www.okcupid.com/login"
-kQuestionUrl = "http://www.okcupid.com/profile/{}/questions"
-kMessageUrl = "http://www.okcupid.com/messages"
+kBaseUrl = "https://www.okcupid.com"
+kLoginUrl = kBaseUrl + "/login"
+kQuestionUrl = kBaseUrl + "/profile/{}/questions"
+kMessageUrl = kBaseUrl + "/messages"
+kMutualLikesUrl = kBaseUrl + "/mutual-likes"
+kMyLikesUrl = kBaseUrl + "/who-you-like"
 kQtextFinder = re.compile(r"^qtext_(\d+)")
 kQuestionFinder = re.compile(r"^question_(\d+)")
 kThreadFinder = re.compile(r"threadid=(\d+)")
@@ -60,6 +64,12 @@ class Message(object):
 		self.recipient = recipient
 		self.timestamp = timestamp
 		self.text = text
+
+class Like(object):
+	def __init__(self, username, mutual, timestamp):
+		self.username = username
+		self.mutual = mutual
+		self.timestamp = timestamp
 
 def message_type_to_folder(is_sent):
 	return 2 if is_sent else 1
@@ -133,6 +143,20 @@ def parse_thread(page, thread_id, username):
 		messages.append(Message(mid, thread_id, sender, recipient, timestamp, text))
 	return messages
 
+def parse_likes(page, mutual, likes=None):
+	if likes is None:
+		likes = list()
+	soup = BeautifulSoup(page, kBSParser)
+	for div in soup.find_all(**{"data-username": True, "data-event-time": True}):
+		username = div["data-username"]
+		timestamp = int(div["data-event-time"])
+		likes.append(Like(username, mutual, timestamp))
+	pages = soup.find("div", class_="pages")
+	next_page = pages.find("li", class_="next")
+	if "disabled" in next_page["class"]:
+		return (likes, None)
+	return (likes, kBaseUrl + next_page.a["href"])
+
 def login(cj, opener, username, password):
 	login_data = urllib.urlencode({
 		"username": username,
@@ -164,7 +188,22 @@ def get_thread(cj, opener, username, thread_id):
 	messages = parse_thread(response.read(), thread_id, username)
 	return messages
 
-def to_xml(questions, messages):
+def get_likes(cj, opener, username, mutual):
+	if mutual:
+		url = kMutualLikesUrl
+	else:
+		url = kMyLikesUrl
+	likes = list()
+	while url is not None:
+		response = opener.open(url)
+		likes, url = parse_likes(response.read(), mutual, likes)
+		# progress goes here because pagination happens at this level
+		sys.stderr.write(".")
+		sys.stderr.flush()
+	sys.stderr.write("\n")
+	return likes
+
+def to_xml(questions, messages, likes):
 	root = ET.Element("okc-backup")
 	questions_tag = ET.SubElement(root, "questions")
 	for question in questions:
@@ -194,26 +233,45 @@ def to_xml(questions, messages):
 		attributes = {
 				"id": str(message.mid),
 				"thread_id": str(message.tid),
-				"timestamp": str(message.timestamp),
+				"timestamp": message.timestamp,
 				"sender": message.sender,
 				"recipient": message.recipient,
 		}
 		message_tag = ET.SubElement(messages_tag, "message", attributes)
 		message_tag.text = message.text
+	likes_tag = ET.SubElement(root, "likes")
+	for like in likes:
+		attributes = {
+				"username": like.username,
+				"timestamp": str(like.timestamp),
+				"mutual": str(like.mutual).lower(),
+		}
+		like_tag = ET.SubElement(root, "like", attributes)
 	return ET.ElementTree(root)
 
 if __name__ == "__main__":
+	parser = argparse.ArgumentParser(description="OkCupid dump")
+	parser.add_argument("output", help="Output XML file name")
+	parser.add_argument("-c", "--config", default=kConfigFile, help="Path to ini file containing login credentials")
+	parser.add_argument("-q", "--questions", action="store_true", help="Dump answers to questions")
+	parser.add_argument("-m", "--messages", action="store_true", help="Dump messages in conversations")
+	parser.add_argument("-l", "--likes", action="store_true", help="Dump likes")
+	parser.add_argument("-a", "--all", action="store_true", help="Dump everything (like -q -m -l)")
+	args = parser.parse_args()
+	if not args.questions and not args.messages and not args.likes and not args.all:
+		parser.print_help()
+		parser.exit("Error: need to dump at least one section")
 	config = ConfigParser.SafeConfigParser()
-	config.read(kConfigFile)
+	config.read(args.config)
 	cj = cookielib.CookieJar()
 	opener = urllib2.build_opener(urllib2.HTTPRedirectHandler(), urllib2.HTTPHandler(), urllib2.HTTPSHandler(), urllib2.HTTPCookieProcessor(cj))
 	username = config.get("login", "username")
 	login(cj, opener, username, config.get("login", "password"))
-	# Questions
 	questions = list()
 	messages = list()
-	# TODO parameterize
-	if True:
+	likes = list()
+	# Questions
+	if args.all or args.questions:
 		pages, questions_per_page = get_question_count(cj, opener, username)
 		question_count = pages * questions_per_page
 		sys.stderr.write("Fetching {} questions\n".format(question_count))
@@ -224,8 +282,7 @@ if __name__ == "__main__":
 			sys.stderr.flush()
 		sys.stderr.write("\n")
 	# Messages
-	# TODO parameterize
-	if True:
+	if args.all or args.messages:
 		threads = set()
 		# Sent
 		for low in range(1, kMaximumThreadCount, kThreadsPerPage):
@@ -251,7 +308,14 @@ if __name__ == "__main__":
 			messages.extend(get_thread(cj, opener, username, thread))
 			sys.stderr.write(".")
 			sys.stderr.flush()
+	# Likes
+	if args.all or args.likes:
+		sys.stderr.write("\n");
+		sys.stderr.write("Fetching likes\n");
+		for mutual in (True, False):
+			likes.extend(get_likes(cj, opener, username, mutual))
 
-	xml = to_xml(questions, messages)
-	xml.write(sys.stdout, encoding="UTF-8")
+	xml = to_xml(questions, messages, likes)
+	with open(args.output, "w") as outfile:
+		xml.write(outfile, encoding="UTF-8")
 	sys.stderr.write("\n")
